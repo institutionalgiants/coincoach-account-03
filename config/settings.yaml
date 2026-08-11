@@ -247,7 +247,7 @@ publishing:
 
 # v0.6.0 defaults are descriptive only; GitHub Variables and Secrets control live use.
 social:
-  source_account_id: account_02
+  source_account_id: account_03
   syndication_enabled: false
   live_approved: false
   discord_enabled: false
