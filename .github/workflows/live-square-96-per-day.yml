@@ -58,7 +58,7 @@ jobs:
           set -e
 
           # Cloudflare automatic slots run all configured accounts.
-          if [ "$TRIGGER_SOURCE" = "cloudflare" ] || [ "$SELECTED_ACCOUNT" = "all" ] || [ -z "$SELECTED_ACCOUNT" ]; then
+          if [ "$SELECTED_ACCOUNT" = "all" ]; then
 
             cat > matrix.json <<'JSON'
           {
