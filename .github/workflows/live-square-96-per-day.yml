@@ -20,7 +20,6 @@ on:
         options:
           - account_01
           - account_02
-          - account_03
           - account_04
           - account_05
           - account_06
@@ -92,20 +91,6 @@ jobs:
                 "cloudinary_api_secret_secret_name": "CLOUDINARY_API_SECRET_ACCOUNT_02"
               },
               {
-                "account_id": "account_03",
-                "square_secret_name": "BINANCE_SQUARE_KEY_ACCOUNT_03",
-                "discord_secret_name": "DISCORD_WEBHOOK_URL_ACCOUNT_03",
-                "facebook_page_id_secret_name": "FACEBOOK_PAGE_ID_ACCOUNT_03",
-                "facebook_token_secret_name": "FACEBOOK_PAGE_ACCESS_TOKEN_ACCOUNT_03",
-                "instagram_user_id_secret_name": "INSTAGRAM_USER_ID_ACCOUNT_03",
-                "instagram_token_secret_name": "INSTAGRAM_ACCESS_TOKEN_ACCOUNT_03",
-                "threads_user_id_secret_name": "THREADS_USER_ID_ACCOUNT_03",
-                "threads_token_secret_name": "THREADS_ACCESS_TOKEN_ACCOUNT_03",
-                "cloudinary_cloud_name_secret_name": "CLOUDINARY_CLOUD_NAME_ACCOUNT_03",
-                "cloudinary_api_key_secret_name": "CLOUDINARY_API_KEY_ACCOUNT_03",
-                "cloudinary_api_secret_secret_name": "CLOUDINARY_API_SECRET_ACCOUNT_03"
-              },
-              {
                 "account_id": "account_04",
                 "square_secret_name": "BINANCE_SQUARE_KEY_ACCOUNT_04",
                 "discord_secret_name": "DISCORD_WEBHOOK_URL_ACCOUNT_04",
@@ -159,9 +144,6 @@ jobs:
                 ;;
               account_02)
                 suffix="02"
-                ;;
-              account_03)
-                suffix="03"
                 ;;
               account_04)
                 suffix="04"

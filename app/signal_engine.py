@@ -91,12 +91,36 @@ class SignalEngine:
         candidates: list[Candidate] = []
         for detection in detections:
             facts = dict(detection.facts)
+            news_context = list(getattr(item.symbol, "news_context", []))[:3]
+            news_adjustment = 0.0
+            for event in news_context:
+                sentiment = str(event.get("sentiment", "neutral")).lower()
+                confidence = max(0.0, min(float(event.get("confidence", 0.5)), 1.0))
+                impact = abs(float(event.get("impact_score", 0.0)))
+                aligned = (detection.side == "LONG" and sentiment == "positive") or (detection.side == "SHORT" and sentiment == "negative")
+                opposed = (detection.side == "LONG" and sentiment == "negative") or (detection.side == "SHORT" and sentiment == "positive")
+                if aligned:
+                    news_adjustment += min(3.0, impact * confidence * 0.5)
+                elif opposed:
+                    news_adjustment -= min(5.0, impact * confidence * 0.7)
+            news_adjustment = max(-8.0, min(6.0, news_adjustment))
+            news_adjusted_score = max(0.0, min(99.0, detection.score + news_adjustment))
             facts.update({
                 "market_tags": list(item.symbol.market_tags),
                 "perpetual_eligible": bool(item.symbol.perpetual_eligible),
                 "quote_asset": item.symbol.quote_asset,
                 "onboard_date_ms": item.symbol.onboard_date_ms,
                 "market_type": item.symbol.market_type,
+                "support_level": lowest20,
+                "resistance_level": highest20,
+                "ema20": ema20[-1],
+                "ema50": ema50[-1],
+                "rsi": rsi14[-1],
+                "volume_ratio": vol_ratio,
+                "change_percent_24h": item.symbol.change_percent_24h,
+                "quote_volume_24h": item.symbol.quote_volume_24h,
+                "news_context": news_context,
+                "news_score_adjustment": round(news_adjustment, 2),
             })
             candidates.append(Candidate(
                 symbol=item.symbol,
@@ -104,7 +128,7 @@ class SignalEngine:
                 candles=item.candles,
                 setup=detection.setup,
                 side=detection.side,  # type: ignore[arg-type]
-                score=min(detection.score, 99.0),
+                score=news_adjusted_score,
                 facts=facts,
             ))
         return candidates

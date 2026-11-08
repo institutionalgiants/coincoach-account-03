@@ -13,4 +13,6 @@ output/android/*
 !output/android/.gitkeep
 tmp/
 
-cloudflare_scheduler/
+.wrangler/
+.dev.vars
+.dev.vars.*

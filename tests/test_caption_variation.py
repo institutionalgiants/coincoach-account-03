@@ -2,7 +2,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.caption_engine import CaptionEngine, _format_signal_detail_lines
+from app.caption_engine import (
+    CaptionEngine,
+    _format_signal_detail_lines,
+    enforce_caption_maximum_length,
+)
 from app.models import Signal
 from app.storage import Storage
 
@@ -177,6 +181,62 @@ class CaptionStructureTest(unittest.TestCase):
                 {"#binance", "#write2earn", "#crypto"},
             )
             storage.close()
+
+
+class CaptionLengthLimitTest(unittest.TestCase):
+    def test_limit_removes_analysis_but_preserves_trade_details_and_hashtags(self):
+        analysis = "Extended market explanation " * 15
+        expected = "\n".join([
+            "A fresh BTC setup is developing",
+            "",
+            "Entry: 64000.00",
+            "TP1: 63000.00",
+            "TP2: 62000.00",
+            "TP3: 61000.00",
+            "Stop Loss: 65000.00",
+            "",
+            "#BTC #binance #write2earn #crypto",
+        ])
+        original = (
+            "A fresh BTC setup is developing\n\n"
+            + analysis + "\n\n"
+            + "\n".join(expected.splitlines()[2:])
+        )
+
+        result = enforce_caption_maximum_length(
+            original, analysis, len(expected)
+        )
+
+        self.assertEqual(result, expected)
+        self.assertLessEqual(len(result), len(expected))
+        for field in ("Entry:", "TP1:", "TP2:", "TP3:", "Stop Loss:"):
+            self.assertIn(field, result)
+        self.assertIn("#BTC", result)
+        self.assertNotIn(analysis, result)
+
+    def test_limit_refuses_to_cut_required_trade_details(self):
+        required = "\n".join([
+            "BTC setup", "",
+            "Entry: 64000.00",
+            "TP1: 63000.00",
+            "TP2: 62000.00",
+            "TP3: 61000.00",
+            "Stop Loss: 65000.00",
+            "",
+            "#BTC #binance #write2earn #crypto",
+        ])
+
+        with self.assertRaises(ValueError):
+            enforce_caption_maximum_length(
+                required, "", len(required) - 1
+            )
+
+    def test_disabled_limit_preserves_caption(self):
+        original = "A caption with its complete analysis and tags."
+        self.assertEqual(
+            enforce_caption_maximum_length(original, "", 0),
+            original,
+        )
 
 
 class CaptionLeverageTest(unittest.TestCase):

@@ -39,6 +39,7 @@ class MarketSymbol:
     perpetual_eligible: bool = False
     onboard_date_ms: int | None = None
     market_type: str = "spot"
+    news_context: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def spread_percent(self) -> float:
