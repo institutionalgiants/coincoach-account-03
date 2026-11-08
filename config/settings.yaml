@@ -100,6 +100,48 @@ market:
       web3: 4.0
       usdc: 3.0
       tradfi: 2.0
+    news:
+      enabled: true
+      max_age_hours: 8
+      timeout_seconds: 8
+      cache_max_age_minutes: 20
+      x_poll_interval_minutes: 15
+      feeds:
+      - name: CoinDesk
+        url: https://www.coindesk.com/arc/outboundfeeds/rss/
+        domain: coindesk.com
+      - name: Cointelegraph
+        url: https://cointelegraph.com/rss
+        domain: cointelegraph.com
+      - name: The Block
+        url: https://www.theblock.co/rss.xml
+        domain: theblock.co
+      - name: Decrypt
+        url: https://decrypt.co/feed
+        domain: decrypt.co
+      watched_people:
+      - Elon Musk
+      - Changpeng Zhao
+      - Vitalik Buterin
+      - Michael Saylor
+      watched_x_accounts:
+        elonmusk: Elon Musk
+        cz_binance: Changpeng Zhao
+        VitalikButerin: Vitalik Buterin
+        saylor: Michael Saylor
+      asset_aliases:
+        BTC: [Bitcoin]
+        ETH: [Ethereum]
+        BNB: [BNB Chain, Binance Coin]
+        DOGE: [Dogecoin]
+        SHIB: [Shiba Inu]
+        XRP: [Ripple, XRP Ledger]
+        SOL: [Solana]
+        ADA: [Cardano]
+        AVAX: [Avalanche]
+        LINK: [Chainlink]
+        TON: [Toncoin, The Open Network]
+        TRX: [Tron]
 signals:
   minimum_score: 48
   tier_b_minimum_score: 40

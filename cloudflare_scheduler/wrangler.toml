@@ -1,0 +1,18 @@
+name = "coincoach-account03-square-scheduler"
+main = "src/index.js"
+compatibility_date = "2026-11-04"
+
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+GITHUB_OWNER = "institutionalgiants"
+GITHUB_REPO = "coincoach-account-03"
+GITHUB_WORKFLOW = "account03-live-square-hourly.yml"
+GITHUB_BRANCH = "main"
+
+[[d1_databases]]
+binding = "ACCOUNT03_PUBLISH_LEDGER"
+database_name = "coincoach-account03-publish-ledger"
+database_id = "81f07235-4d25-47a9-a8ab-177a15366f32"
+migrations_dir = "migrations"

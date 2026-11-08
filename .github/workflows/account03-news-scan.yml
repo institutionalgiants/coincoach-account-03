@@ -1,0 +1,38 @@
+name: Account 03 market intelligence scan
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coincoach-account03-news-scan
+  cancel-in-progress: false
+
+jobs:
+  scan-news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      NEWS_CACHE_PATH: data/news/account_03/news_intelligence.json
+      X_API_BEARER_TOKEN: ${{ secrets.X_API_BEARER_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Restore previous Account 03 news cache
+        uses: actions/cache@v4
+        with:
+          path: data/news/account_03/news_intelligence.json
+          key: coincoach-account03-news-${{ github.run_id }}
+          restore-keys: |
+            coincoach-account03-news-
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Scan Binance universe and current catalyst feeds
+        run: python -m scripts.scan_market_intelligence

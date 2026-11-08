@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict
 
 from .binance_market import BinanceMarketClient
 from .caption_engine import CaptionEngine
 from .config import AppConfig
 from .router import AccountRouter
+from .news_intelligence import NewsIntelligence
 from .scanner import UniverseScanner
 from .signal_engine import SignalEngine
 from .storage import Storage
@@ -41,6 +43,42 @@ async def run_cycle(config: AppConfig) -> dict:
     caption_engine = CaptionEngine(storage, config.settings)
     try:
         shortlist = await scanner.shortlist()
+        news_intelligence = NewsIntelligence(config.settings)
+        news_by_asset = {}
+
+        # Account 03 news is opt-in and may only influence an Account 03-only run.
+        news_enabled = os.getenv("ACCOUNT03_NEWS_ENABLED", "").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+
+        if news_enabled:
+            active_account_ids = {account.id for account in active_accounts}
+            if active_account_ids != {"account_03"}:
+                raise RuntimeError(
+                    "Account 03 news cannot be used in a multi-account run"
+                )
+
+            cache_path = os.getenv("NEWS_CACHE_PATH", "").strip()
+            if not cache_path:
+                raise RuntimeError(
+                    "ACCOUNT03_NEWS_ENABLED requires NEWS_CACHE_PATH"
+                )
+
+            assets = [item.base_asset for item in shortlist]
+            news_by_asset = news_intelligence.load_cache(
+                cache_path,
+                assets,
+                max_age_minutes=int(
+                    news_intelligence.news_cfg.get("cache_max_age_minutes", 20)
+                ),
+            )
+
+            # The dedicated news-scan workflow is the sole cache writer.
+            # Account 03 publishing consumes this cache read-only.
+            for market_symbol in shortlist:
+                market_symbol.news_context = news_by_asset.get(
+                    market_symbol.base_asset.upper(), []
+                )
         deep_items = await scanner.deep_scan(shortlist)
         candidates = []
         for item in deep_items:
@@ -58,6 +96,10 @@ async def run_cycle(config: AppConfig) -> dict:
             if signal is not None:
                 signals.append(signal)
 
+        for rank, signal in enumerate(signals, 1):
+            signal.facts["scan_rank"] = rank
+            signal.facts["scan_pool_size"] = len(signals)
+
         router = AccountRouter(config.settings)
         routed, shortages = router.route(
             signals,
@@ -71,6 +113,7 @@ async def run_cycle(config: AppConfig) -> dict:
             "active_accounts": [account.id for account in active_accounts],
             "account_statuses": config.account_statuses(),
             "universe_filter_stats": scanner.last_filter_stats,
+            "news_intelligence": {**news_intelligence.stats, "assets_with_events": len(news_by_asset)},
             "shortlist_count": len(shortlist),
             "deep_scan_count": len(deep_items),
             "candidate_count": len(candidates),

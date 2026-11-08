@@ -15,6 +15,8 @@ from app.official_web_chart import OfficialBinanceWebChartCapture
 from app.social_publishers import SocialSyndicator
 from app.square_publisher import SquarePublishError, SquarePublisher
 from app.web_capture import WebCaptureError
+from app.publish_guard import check_publish_guard, record_publish_attempt, record_successful_publish
+from app.account03_ledger_client import Account03LedgerClient, Account03LedgerError
 
 
 
@@ -73,6 +75,44 @@ def _safe_float(name: str, default: float, minimum: float, maximum: float) -> fl
     return value
 
 
+def validate_account03_live_mode(
+    matrix_account_id: str | None,
+    publishing_requested: bool,
+    account03_live_mode: bool,
+    active_account_ids: set[str],
+) -> None:
+    """Prevent Account 03 live publishing outside its dedicated workflow."""
+    if account03_live_mode and matrix_account_id != "account_03":
+        raise RuntimeError(
+            "ACCOUNT03_LIVE_MODE requires ACTIVE_ACCOUNT_ID=account_03"
+        )
+
+    if publishing_requested and "account_03" in active_account_ids:
+        if matrix_account_id != "account_03" or not account03_live_mode:
+            raise RuntimeError(
+                "Live Account 03 requires its dedicated workflow, "
+                "ACTIVE_ACCOUNT_ID=account_03 and ACCOUNT03_LIVE_MODE=true"
+            )
+
+
+def apply_account03_runtime_overrides(settings: dict[str, Any]) -> None:
+    """Apply Account 03-only scan, schedule, caption and publishing settings."""
+    settings["schedule"]["signals_per_account_per_hour"] = 1
+    settings["schedule"]["slot_spacing_minutes"] = 60
+    settings["market"]["shortlist_size"] = 300
+    settings["market"]["deep_scan_limit"] = 180
+
+    captions = settings["captions"]
+    captions["guys_probability"] = 0.0
+    captions["maximum_recent_phrases"] = 1000
+    captions["maximum_length"] = 1000
+    captions["enforce_maximum_length"] = True
+    captions["include_context_line"] = True
+    captions["include_market_analysis"] = True
+
+    settings["publishing"]["per_account_daily_limit"] = 24
+
+
 def _load_ledger(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"days": {}}
@@ -96,6 +136,43 @@ def _day_key() -> str:
 
 def _published_today(ledger: dict[str, Any], account_id: str) -> int:
     return int(ledger.get("days", {}).get(_day_key(), {}).get(account_id, 0))
+
+
+def _account03_signal_payload(signal: Any) -> dict[str, Any]:
+    """Build the strict, JSON-safe signal payload required by the D1 API."""
+    def value(name: str) -> Any:
+        if isinstance(signal, dict):
+            return signal.get(name)
+        return getattr(signal, name, None)
+
+    side = value("side")
+    side = getattr(side, "value", side)
+
+    payload = {
+        "signal_id": str(value("signal_id") or ""),
+        "symbol": str(value("symbol") or ""),
+        "base_asset": str(value("base_asset") or ""),
+        "side": str(side or "").upper(),
+        "timeframe": str(value("timeframe") or ""),
+    }
+
+    for name in (
+        "entry_mid", "stop_percent", "tp1_percent", "tp2_percent", "tp3_percent"
+    ):
+        raw = value(name)
+        try:
+            payload[name] = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise Account03LedgerError(
+                f"Signal is missing a valid {name} value."
+            ) from exc
+
+    if not all(payload[name] for name in (
+        "signal_id", "symbol", "base_asset", "side", "timeframe"
+    )):
+        raise Account03LedgerError("Signal is missing a required identity field.")
+
+    return payload
 
 
 def _record_publish(ledger: dict[str, Any], account_id: str) -> None:
@@ -217,6 +294,23 @@ async def main() -> None:
     config = load_config(root)
     matrix_account_id = configure_matrix_account(config)
 
+    # Explicitly isolate Account 03's live configuration and D1 ledger.
+    account03_live_mode = _truthy("ACCOUNT03_LIVE_MODE")
+    publishing_requested = bool(config.settings["publishing"]["enabled"])
+
+    active_account_ids = {
+        account.id for account in config.active_accounts()
+    }
+    validate_account03_live_mode(
+        matrix_account_id=matrix_account_id,
+        publishing_requested=publishing_requested,
+        account03_live_mode=account03_live_mode,
+        active_account_ids=active_account_ids,
+    )
+
+    if account03_live_mode:
+        apply_account03_runtime_overrides(config.settings)
+
     posts_per_account = _safe_int("POSTS_PER_ACCOUNT_PER_RUN", 1, 1, 5)
     reserve_per_account = _safe_int("LIVE_RESERVE_CANDIDATES", 4, 1, 8)
     candidate_plan = configure_live_candidate_reserve(
@@ -232,6 +326,13 @@ async def main() -> None:
     live = bool(config.settings["publishing"]["enabled"])
     if live and not _truthy("LIVE_PUBLISH_APPROVED"):
         raise RuntimeError("PUBLISH_ENABLED=true requires LIVE_PUBLISH_APPROVED=true")
+
+    account03_d1 = live and account03_live_mode and matrix_account_id == "account_03"
+    ledger_client = None
+    if account03_d1:
+        # Account 03 must never fall back to its local JSON ledger in live mode.
+        ledger_client = Account03LedgerClient.from_env()
+        ledger_client.healthcheck()
 
     preview = await run_cycle(config)
     candidate_posts = list(preview.get("posts", []))
@@ -250,7 +351,7 @@ async def main() -> None:
     ledger_path = Path(ledger_value) if ledger_value else root / "data" / "publish_ledger.json"
     if not ledger_path.is_absolute():
         ledger_path = root / ledger_path
-    ledger = _load_ledger(ledger_path)
+    ledger = {"days": {}} if account03_d1 else _load_ledger(ledger_path)
     configured_daily_limit = int(
         config.settings["publishing"].get("per_account_daily_limit", 96)
     )
@@ -268,7 +369,7 @@ async def main() -> None:
         terminal_publish_error = False
 
         while successful_slots < posts_per_account and candidate_index < len(account_candidates):
-            if live and _published_today(ledger, account_id) >= daily_limit:
+            if live and not account03_d1 and _published_today(ledger, account_id) >= daily_limit:
                 publish_results.append(
                     {
                         "account_id": account_id,
@@ -283,6 +384,21 @@ async def main() -> None:
             post = account_candidates[candidate_index]
             candidate_index += 1
             signal = post["signal"]
+            if live and not account03_d1:
+                guard_reason = check_publish_guard(
+                    ledger, account_id, signal,
+                    duplicate_hours=24, max_coin_posts_per_utc_day=2,
+                    min_interval_minutes=0,
+                )
+                if guard_reason:
+                    publish_results.append({
+                        "account_id": account_id, "symbol": signal.get("symbol"),
+                        "published": False, "status": f"blocked_{guard_reason}",
+                    })
+                    if guard_reason == "hourly_limit":
+                        terminal_publish_error = True
+                        break
+                    continue
             slot_number = successful_slots + 1
             image_path = (
                 root
@@ -337,11 +453,50 @@ async def main() -> None:
                 successful_slots += 1
                 continue
 
+            reservation_id: str | None = None
+
+            if account03_d1:
+                try:
+                    reservation = ledger_client.reserve(_account03_signal_payload(signal))
+                except Account03LedgerError as exc:
+                    result["status"] = "blocked_ledger_unavailable"
+                    result["error"] = str(exc)
+                    publish_results.append(result)
+                    terminal_publish_error = True
+                    break
+
+                if not reservation.get("reserved"):
+                    reason = str(reservation.get("reason", "reservation_conflict"))
+                    result["status"] = f"blocked_{reason}"
+                    publish_results.append(result)
+                    if reason in {
+                        "hourly_limit", "account_daily_limit", "reservation_conflict"
+                    }:
+                        terminal_publish_error = True
+                        break
+                    continue
+
+                reservation_id = str(reservation["reservation_id"])
+            else:
+                # Existing accounts retain their original local-ledger behavior.
+                record_publish_attempt(ledger, account_id, signal, status="publish_pending")
+                _save_ledger(ledger_path, ledger)
+
             try:
                 output = publisher.publish_image(account, post["caption"], image_path)
             except Exception as exc:
-                # Never switch to another candidate after a publisher/API exception: the
-                # remote request may have succeeded even if its response was ambiguous.
+                if account03_d1:
+                    try:
+                        ledger_client.finalize(reservation_id, "publish_uncertain")
+                    except Account03LedgerError as ledger_exc:
+                        result["ledger_finalize_error"] = str(ledger_exc)
+                else:
+                    # Preserve the existing local-ledger behavior for other accounts.
+                    record_publish_attempt(
+                        ledger, account_id, signal, status="publish_uncertain"
+                    )
+                    _save_ledger(ledger_path, ledger)
+
                 result["status"] = "failed_publish"
                 result["error"] = str(exc)
                 publish_results.append(result)
@@ -351,9 +506,24 @@ async def main() -> None:
             result["published"] = True
             result["status"] = "published"
             result["publisher_output"] = output
+
+            if account03_d1:
+                try:
+                    ledger_client.finalize(reservation_id, "published")
+                except Account03LedgerError as exc:
+                    # Binance confirmed the post. The pending D1 reservation still
+                    # consumes the quota, so stop rather than risking another post.
+                    result["status"] = "published_ledger_finalize_failed"
+                    result["ledger_finalize_error"] = str(exc)
+                    successful_slots += 1
+                    publish_results.append(result)
+                    terminal_publish_error = True
+                    break
+            else:
+                record_successful_publish(ledger, account_id, signal)
+                _save_ledger(ledger_path, ledger)
+
             successful_slots += 1
-            _record_publish(ledger, account_id)
-            _save_ledger(ledger_path, ledger)
 
             # Social syndication is deliberately downstream of a confirmed Square
             # success. The active account's own social credentials are used when

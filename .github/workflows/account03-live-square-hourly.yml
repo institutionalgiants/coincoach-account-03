@@ -1,0 +1,327 @@
+name: CoinCoach Square live — Account 03 hourly
+
+on:
+  workflow_dispatch:
+    inputs:
+      trigger_source:
+        description: Trigger source
+        required: true
+        default: manual
+        type: choice
+        options:
+          - manual
+          - account03_scheduler_v2
+
+      account_id:
+        description: This deployment is isolated to Account 03
+        required: true
+        default: account_03
+        type: choice
+        options:
+          - account_03
+
+      confirmation:
+        description: Type RUN_LIVE_SLOT for a manual post
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coincoach-account03-square-hourly
+  cancel-in-progress: false
+
+jobs:
+
+  select-accounts:
+    if: ${{ vars.COINCOACH_LIVE_96_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+
+    steps:
+      - name: Select account matrix
+        id: select
+        shell: bash
+        env:
+          TRIGGER_SOURCE: ${{ inputs.trigger_source }}
+          SELECTED_ACCOUNT: account_03
+        run: |
+          set -e
+
+          # Single-account matrix for Account 03 only.
+          python - <<'PY'
+          import json
+          item = {
+              "account_id": "account_03",
+              "square_secret_name": "BINANCE_SQUARE_KEY_ACCOUNT_03",
+              "discord_secret_name": "DISCORD_WEBHOOK_URL_ACCOUNT_03",
+              "facebook_page_id_secret_name": "FACEBOOK_PAGE_ID_ACCOUNT_03",
+              "facebook_token_secret_name": "FACEBOOK_PAGE_ACCESS_TOKEN_ACCOUNT_03",
+              "instagram_user_id_secret_name": "INSTAGRAM_USER_ID_ACCOUNT_03",
+              "instagram_token_secret_name": "INSTAGRAM_ACCESS_TOKEN_ACCOUNT_03",
+              "threads_user_id_secret_name": "THREADS_USER_ID_ACCOUNT_03",
+              "threads_token_secret_name": "THREADS_ACCESS_TOKEN_ACCOUNT_03",
+              "cloudinary_cloud_name_secret_name": "CLOUDINARY_CLOUD_NAME_ACCOUNT_03",
+              "cloudinary_api_key_secret_name": "CLOUDINARY_API_KEY_ACCOUNT_03",
+              "cloudinary_api_secret_secret_name": "CLOUDINARY_API_SECRET_ACCOUNT_03"
+          }
+          with open("matrix.json", "w", encoding="utf-8") as handle:
+              json.dump({"include": [item]}, handle)
+          PY
+
+          matrix="$(cat matrix.json)"
+
+          echo "Selected matrix:"
+          echo "$matrix"
+
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+
+  publish-account:
+    needs: select-accounts
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 14
+
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.select-accounts.outputs.matrix) }}
+
+    env:
+      APP_ENV: github-actions-live-96-per-day-parallel
+      ACCOUNT03_LIVE_MODE: "true"
+      ACCOUNT03_NEWS_ENABLED: "true"
+
+      ACTIVE_ACCOUNT_ID: ${{ matrix.account_id }}
+
+      BINANCE_SQUARE_KEY_ACTIVE: ${{ secrets[matrix.square_secret_name] }}
+      X_API_BEARER_TOKEN: ${{ secrets.X_API_BEARER_TOKEN }}
+      ACCOUNT03_LEDGER_API_URL: ${{ secrets.ACCOUNT03_LEDGER_API_URL }}
+      ACCOUNT03_LEDGER_API_TOKEN: ${{ secrets.ACCOUNT03_LEDGER_API_TOKEN }}
+
+      DATABASE_PATH: data/state/${{ matrix.account_id }}/coincoach.db
+
+      NEWS_CACHE_PATH: data/news/account_03/news_intelligence.json
+
+      ACCOUNT_ACTIVATION_MODE: key_present
+
+      PUBLISH_ENABLED: "true"
+
+      LIVE_PUBLISH_APPROVED: "true"
+
+      POSTS_PER_ACCOUNT_PER_RUN: "1"
+
+      LIVE_EXPECTED_POSTS_PER_HOUR: "1"
+
+      PER_ACCOUNT_DAILY_LIMIT: "24"
+
+      LIVE_RESERVE_CANDIDATES: "4"
+
+      LIVE_OUTER_CAPTURE_ATTEMPTS: "2"
+
+      LIVE_RETRY_DELAY_SECONDS: "2"
+
+      SYMBOL_COOLDOWN_HOURS: "1"
+
+      STATELESS_SLOT_ROTATION: "true"
+
+      WEB_CAPTURE_ENABLED: "true"
+
+      RENDERED_CHART_ENABLED: "false"
+
+      MOBILE_CAPTURE_ENABLED: "false"
+
+      # Optional per-account social fan-out.
+      # The same post is sent to a connected destination only after Square
+      # succeeds. If no destination credentials are present for this account,
+      # the result is Binance-only.
+
+      SOCIAL_SYNDICATION_ENABLED: "false"
+
+      SOCIAL_LIVE_APPROVED: "false"
+
+      SOCIAL_STATE_PATH: data/state/${{ matrix.account_id }}/social_delivery_state.json
+
+      SOCIAL_PENDING_RETRY_LIMIT: "1"
+
+      SOCIAL_REQUEST_TIMEOUT_SECONDS: "45"
+
+      # Enable checks are on; the application only activates a platform when
+      # its complete per-account credentials are actually present.
+
+      DISCORD_PUBLISH_ENABLED: "false"
+
+      FACEBOOK_PUBLISH_ENABLED: "false"
+
+      INSTAGRAM_PUBLISH_ENABLED: "false"
+
+      THREADS_PUBLISH_ENABLED: "false"
+
+      DISCORD_WEBHOOK_URL: ${{ secrets[matrix.discord_secret_name] }}
+
+      FACEBOOK_PAGE_ID: ${{ secrets[matrix.facebook_page_id_secret_name] }}
+
+      FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets[matrix.facebook_token_secret_name] }}
+
+      INSTAGRAM_USER_ID: ${{ secrets[matrix.instagram_user_id_secret_name] }}
+
+      INSTAGRAM_ACCESS_TOKEN: ${{ secrets[matrix.instagram_token_secret_name] }}
+
+      THREADS_USER_ID: ${{ secrets[matrix.threads_user_id_secret_name] }}
+
+      THREADS_ACCESS_TOKEN: ${{ secrets[matrix.threads_token_secret_name] }}
+
+      CLOUDINARY_CLOUD_NAME: ${{ secrets[matrix.cloudinary_cloud_name_secret_name] }}
+
+      CLOUDINARY_API_KEY: ${{ secrets[matrix.cloudinary_api_key_secret_name] }}
+
+      CLOUDINARY_API_SECRET: ${{ secrets[matrix.cloudinary_api_secret_secret_name] }}
+
+      CLOUDINARY_FOLDER: coincoach-signals
+
+      META_GRAPH_API_VERSION: ${{ vars.META_GRAPH_API_VERSION }}
+
+      THREADS_API_BASE_URL: ${{ vars.THREADS_API_BASE_URL || 'https://graph.threads.net/v1.0' }}
+
+
+    steps:
+
+      - name: Validate live-slot trigger
+        shell: bash
+        env:
+          TRIGGER_SOURCE: ${{ inputs.trigger_source }}
+          TRIGGER_CONFIRMATION: ${{ inputs.confirmation }}
+          REQUESTED_ACCOUNT_ID: ${{ inputs.account_id }}
+        run: |
+          set -euo pipefail
+
+          if [ "$REQUESTED_ACCOUNT_ID" != "account_03" ]; then
+            echo "Only Account 03 is permitted"
+            exit 1
+          fi
+
+          case "$TRIGGER_SOURCE" in
+            manual)
+              if [ "$TRIGGER_CONFIRMATION" != "RUN_LIVE_SLOT" ]; then
+                echo "Manual confirmation must be RUN_LIVE_SLOT"
+                exit 1
+              fi
+              ;;
+
+            account03_scheduler_v2)
+              if [ "$TRIGGER_CONFIRMATION" != "ACCOUNT03_RANDOM_SLOT" ]; then
+                echo "Account 03 scheduler confirmation is invalid"
+                exit 1
+              fi
+              ;;
+
+            cloudflare)
+              echo "Legacy Cloudflare trigger disabled for Account 03"
+              exit 1
+              ;;
+
+            *)
+              echo "Unsupported trigger source"
+              exit 1
+              ;;
+          esac
+
+      - name: Detect configured API account
+        id: account-key
+        shell: bash
+        env:
+          ACCOUNT_KEY: ${{ secrets[matrix.square_secret_name] }}
+        run: |
+          if [ -n "$ACCOUNT_KEY" ]; then
+            echo "active=true" >> "$GITHUB_OUTPUT"
+            echo "${{ matrix.account_id }} is active"
+          else
+            echo "active=false" >> "$GITHUB_OUTPUT"
+            echo "${{ matrix.account_id }} has no configured API key; skipping this matrix job"
+          fi
+
+
+      - name: Check out project
+        if: steps.account-key.outputs.active == 'true'
+        uses: actions/checkout@v6
+
+
+      - name: Set up Python
+        if: steps.account-key.outputs.active == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+
+      - name: Set up Node
+        if: steps.account-key.outputs.active == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+
+      - name: Restore isolated account state
+        if: steps.account-key.outputs.active == 'true'
+        uses: actions/cache@v4
+        with:
+          path: data/state/${{ matrix.account_id }}
+          key: coincoach-live-state-${{ matrix.account_id }}-${{ github.run_id }}
+          restore-keys: |
+            coincoach-live-state-${{ matrix.account_id }}-
+
+      - name: Restore Account 03 news intelligence (read-only)
+        if: steps.account-key.outputs.active == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: data/news/account_03/news_intelligence.json
+          key: coincoach-account03-news-${{ github.run_id }}
+          restore-keys: |
+            coincoach-account03-news-
+
+
+      - name: Install Python packages
+        if: steps.account-key.outputs.active == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+
+      - name: Install Chromium for Playwright
+        if: steps.account-key.outputs.active == 'true'
+        run: |
+          python -m playwright install --with-deps chromium
+
+
+      - name: Install official Binance Square Post Skill
+        if: steps.account-key.outputs.active == 'true'
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/binance/binance-skills-hub.git .binance-skills-hub
+
+          SKILL_DIR="$GITHUB_WORKSPACE/.binance-skills-hub/skills/binance/square-post"
+
+          test -f "$SKILL_DIR/scripts/post-image.mjs"
+
+          echo "BINANCE_SQUARE_SKILL_DIR=$SKILL_DIR" >> "$GITHUB_ENV"
+
+
+      - name: Generate one verified chart and publish for this API account
+        if: steps.account-key.outputs.active == 'true'
+        run: |
+          python -m scripts.run_square_slot
+
+
+      - name: Upload isolated account artifact
+        if: ${{ always() && steps.account-key.outputs.active == 'true' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: coincoach-live-${{ matrix.account_id }}-${{ github.run_number }}
+          path: output/
+          if-no-files-found: warn
+          retention-days: 2

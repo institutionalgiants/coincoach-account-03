@@ -19,7 +19,7 @@ STYLE_OPENERS = {
     ],
     "calm": [
         "watching", "keeping an eye on", "worth watching", "still tracking",
-        "quietly watching", "this level on", "the structure on", "the current range on",
+        "quietly watching", "tracking the structure on", "looking closely at", "following the price action on",
     ],
     "reactive": [
         "looks like", "that move on", "this bounce on", "the reaction on",
@@ -359,6 +359,196 @@ def _hashtag_line(signal: Signal, seed: bytes, hashtag_cfg: dict) -> str:
 
     return " ".join(tags)
 
+def _human_analysis_paragraph(signal: Signal, seed: bytes) -> str:
+    """Explain the chart thesis using measured signal facts and attributed news."""
+    facts = signal.facts or {}
+    ema_fast = float(facts.get("ema20", 0) or 0)
+    ema_slow = float(facts.get("ema50", 0) or 0)
+    rsi_value = float(facts.get("rsi", 50) or 50)
+    volume_ratio = float(facts.get("volume_ratio", 1) or 1)
+    support = float(facts.get("support_level", 0) or 0)
+    resistance = float(facts.get("resistance_level", 0) or 0)
+
+    choose = lambda items, offset: items[seed[offset % len(seed)] % len(items)]
+    if ema_fast > ema_slow * 1.001:
+        trend = choose([
+            "The short-term trend is still above its slower average, which keeps the broader structure constructive.",
+            "Price structure is leaning upward: the faster average remains above the slower trend line.",
+            "The faster average is holding over the slower one, so buyers still have the trend advantage for now.",
+        ], 2)
+    elif ema_fast and ema_slow and ema_fast < ema_slow * 0.999:
+        trend = choose([
+            "The faster average is below the slower trend line, so sellers still have the broader structure on their side.",
+            "The trend remains under pressure, with the short-term average sitting beneath the slower one.",
+            "The moving-average structure is still bearish; any bounce needs to prove it can hold before the bias changes.",
+        ], 3)
+    else:
+        trend = choose([
+            "The moving averages are close together, so this is a level-led setup rather than a strong trend call.",
+            "Trend direction is not especially clear yet; the nearby levels and the next price reaction matter more here.",
+        ], 4)
+
+    if rsi_value >= 70:
+        momentum = choose([
+            f"RSI is {rsi_value:.1f}, showing strong momentum but also warning against chasing an extended move.",
+            f"Momentum is strong with RSI at {rsi_value:.1f}; the risk now is paying up after the move has already stretched.",
+        ], 5)
+    elif rsi_value <= 30:
+        momentum = choose([
+            f"RSI is {rsi_value:.1f}; momentum is weak, so a reversal needs confirmation rather than an assumption.",
+            f"RSI has slipped to {rsi_value:.1f}. That shows pressure, but it does not make a bounce automatic.",
+        ], 6)
+    elif rsi_value >= 55:
+        momentum = choose([
+            f"RSI is {rsi_value:.1f}, which points to positive momentum without being deeply overbought.",
+            f"The RSI reading of {rsi_value:.1f} suggests buyers have the initiative, while leaving some room before an overheated reading.",
+        ], 7)
+    elif rsi_value <= 45:
+        momentum = choose([
+            f"RSI is {rsi_value:.1f}, showing that buyers have not yet regained clear momentum.",
+            f"With RSI at {rsi_value:.1f}, upside momentum still needs to improve before the move looks convincing.",
+        ], 8)
+    else:
+        momentum = f"RSI is {rsi_value:.1f}, a fairly balanced reading that leaves the next price reaction to decide direction."
+
+    if volume_ratio >= 1.5:
+        participation = choose([
+            f"Volume is running about {volume_ratio:.1f}x its recent average, giving this move better participation.",
+            f"Activity is up to roughly {volume_ratio:.1f}x normal volume, so the move is attracting more participation than usual.",
+        ], 9)
+    elif volume_ratio <= 0.75:
+        participation = choose([
+            f"Volume is only about {volume_ratio:.1f}x its recent average, so stronger participation would help confirm the move.",
+            f"Participation is still light at {volume_ratio:.1f}x average volume; I would not treat this as confirmed momentum yet.",
+        ], 10)
+    else:
+        participation = f"Volume is close to its recent average ({volume_ratio:.1f}x), so follow-through will matter more than one candle."
+
+    change_24h = facts.get("change_percent_24h")
+    if isinstance(change_24h, (int, float)):
+        movement = choose([
+            f"{signal.base_asset} is {abs(float(change_24h)):.2f}% {'higher' if float(change_24h) >= 0 else 'lower'} over 24 hours and is trading around {_fmt(signal.current_price)}.",
+            f"The 24-hour move stands at {float(change_24h):+.2f}%, with the latest price near {_fmt(signal.current_price)}.",
+        ], 11)
+    else:
+        movement = f"The latest price is around {_fmt(signal.current_price)}."
+
+    if support > 0 and resistance > 0:
+        levels = choose([
+            f"The recent support area is around {_fmt(support)}, while resistance is near {_fmt(resistance)}.",
+            f"The nearby map is support around {_fmt(support)} and overhead resistance close to {_fmt(resistance)}.",
+        ], 12)
+    elif support > 0:
+        levels = f"The nearest measured support area is around {_fmt(support)}."
+    elif resistance > 0:
+        levels = f"The nearest measured resistance area is around {_fmt(resistance)}."
+    else:
+        levels = "The entry band and stop define the key levels for this plan."
+
+    if signal.side == "LONG":
+        entry = choose([
+            "For the long, the entry band gives a defined pullback area to assess instead of buying a stretched candle.",
+            "What makes the long interesting is the planned entry zone: it lets price come to the setup rather than chasing it.",
+            "Before taking the long, I would want price to respect the entry area and hold its structure rather than spike and fade.",
+        ], 13)
+    else:
+        entry = choose([
+            "The planned entry is an area to watch for a failed bounce; it avoids chasing an already extended drop.",
+            "The short idea depends on sellers defending the entry zone, not simply on price falling quickly.",
+            "A weak reaction around the entry band would support the plan; a clean reclaim would weaken it.",
+        ], 14)
+
+    rank = int(facts.get("scan_rank", 0) or 0)
+    pool_size = int(facts.get("scan_pool_size", 0) or 0)
+    ranking = ""
+    if pool_size > 1 and 1 <= rank <= 3:
+        if rank == 1:
+            ranking = f"Among {pool_size} setups that passed the scan filters, this currently ranks first; the entry still needs to hold before it becomes actionable."
+        else:
+            ranking = f"This sits in the top three of {pool_size} setups that passed the scan filters, with the mapped entry and stop defining the risk."
+
+    blocks = [trend, movement, momentum, participation, levels, entry, ranking]
+    orders = [
+        (1, 0, 2, 3, 4, 5, 6),
+        (0, 4, 1, 2, 5, 3, 6),
+        (2, 1, 0, 4, 3, 5, 6),
+        (5, 0, 1, 3, 2, 4, 6),
+    ]
+    order = choose(orders, 15)
+    paragraph = " ".join(blocks[index] for index in order if blocks[index])
+
+    news_rows = facts.get("news_context", [])
+    if isinstance(news_rows, list) and news_rows:
+        event = news_rows[0]
+        title = " ".join(str(event.get("title", "")).split())[:150].rstrip(" .")
+        source = str(event.get("source", "market news")).strip()
+        url = str(event.get("url", "")).strip()
+        evidence = str(event.get("evidence_level", "reported_media"))
+        published = str(event.get("published_at", "")).strip()
+        time_note = ""
+        try:
+            event_time = datetime.fromisoformat(published.replace("Z", "+00:00"))
+            if event_time.tzinfo is None:
+                event_time = event_time.replace(tzinfo=timezone.utc)
+            time_note = f" Published {event_time.astimezone(timezone.utc):%d %b %H:%M UTC}."
+        except (TypeError, ValueError):
+            pass
+        sentiment = str(event.get("sentiment", "neutral")).lower()
+        if title and evidence == "watched_x_profile_post":
+            handle = str(event.get("account_handle", "")).strip()
+            profile = f"@{handle}" if handle else source
+            news_line = f"A recent post from the watched X profile {profile} says: ‘{title}’. Treat the post as a catalyst to verify, not as trade confirmation.{time_note}"
+        elif title and sentiment == "negative":
+            news_line = f"Risk context: {source} reported: ‘{title}’. This is reported information, so check the original notice and the market's reaction before acting on it.{time_note}"
+        elif title and sentiment == "positive":
+            news_line = f"Potential catalyst: {source} reported: ‘{title}’. This is reported context; confirm the project's own announcement and market reaction before treating it as actionable.{time_note}"
+        elif title:
+            news_line = f"Latest reported context from {source}: ‘{title}’. Check the primary announcement and price reaction before treating it as actionable.{time_note}"
+        else:
+            news_line = ""
+        if news_line:
+            if url:
+                news_line += f" Source: {url}"
+            paragraph += " " + news_line
+    return paragraph
+def enforce_caption_maximum_length(
+    caption: str,
+    analysis_paragraph: str,
+    maximum_length: int,
+) -> str:
+    """Remove optional analysis before enforcing the caption length limit."""
+    if maximum_length < 1 or len(caption) <= maximum_length:
+        return caption
+
+    content = caption
+    if analysis_paragraph:
+        content = content.replace(analysis_paragraph, "", 1)
+
+    cleaned_lines = []
+    previous_blank = True
+
+    for line in content.splitlines():
+        line = line.rstrip()
+        if line:
+            cleaned_lines.append(line)
+            previous_blank = False
+        elif cleaned_lines and not previous_blank:
+            cleaned_lines.append("")
+            previous_blank = True
+
+    while cleaned_lines and not cleaned_lines[-1]:
+        cleaned_lines.pop()
+
+    result = "\n".join(cleaned_lines)
+
+    if len(result) > maximum_length:
+        raise ValueError(
+            "Required trade details exceed the configured caption maximum length."
+        )
+
+    return result
+
+
 class CaptionEngine:
     def __init__(
         self,
@@ -427,6 +617,18 @@ class CaptionEngine:
             opening, signal, seed, caption_cfg, self.now_provider(), account_id
         )
         self.storage.remember_phrase(account_id, opening)
+        analysis_paragraph = ""
+        if bool(caption_cfg.get("include_market_analysis", True)):
+            for variant_index in range(12):
+                variant_seed = hashlib.sha256(seed + f":analysis:{variant_index}".encode()).digest()
+                candidate_analysis = _human_analysis_paragraph(signal, variant_seed)
+                if candidate_analysis not in recent:
+                    analysis_paragraph = candidate_analysis
+                    break
+            if not analysis_paragraph:
+                analysis_paragraph = _human_analysis_paragraph(signal, seed)
+        if analysis_paragraph:
+            self.storage.remember_phrase(account_id, analysis_paragraph)
         signal_detail_lines = _format_signal_detail_lines(
             signal,
             seed,
@@ -434,6 +636,8 @@ class CaptionEngine:
         )
 
         parts = [opening, ""]
+        if analysis_paragraph:
+            parts.extend([analysis_paragraph, ""])
 
         # Direction / market / timeframe context is optional. CoinCoach's default public
         # format keeps the caption cleaner and lets the official chart show the timeframe.
@@ -456,4 +660,13 @@ class CaptionEngine:
             parts.extend(["", risk_note])
 
         parts.extend(["", _hashtag_line(signal, seed, caption_cfg.get("hashtags", {}))])
-        return "\n".join(parts)
+        caption = "\n".join(parts)
+
+        if bool(caption_cfg.get("enforce_maximum_length", False)):
+            caption = enforce_caption_maximum_length(
+                caption,
+                analysis_paragraph,
+                int(caption_cfg.get("maximum_length", 0) or 0),
+            )
+
+        return caption
