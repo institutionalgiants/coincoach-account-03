@@ -95,6 +95,36 @@ class Account03LedgerClientTests(unittest.TestCase):
         self.assertEqual(result["reason"], "hourly_limit")
 
     @patch("app.account03_ledger_client.urlopen")
+    def test_consumes_one_time_scheduler_authorization(self, urlopen):
+        nonce = "b" * 64
+        urlopen.return_value = FakeResponse(
+            200,
+            {"ok": True, "consumed": True, "hour_bucket": "2026-11-08-16"},
+        )
+
+        result = self.client.consume_slot_authorization(nonce)
+
+        self.assertTrue(result["consumed"])
+        request = urlopen.call_args.args[0]
+        self.assertTrue(request.full_url.endswith("/v1/slot-authorizations/consume"))
+        self.assertEqual(json.loads(request.data.decode("utf-8")), {"nonce": nonce})
+
+    @patch("app.account03_ledger_client.urlopen")
+    def test_replayed_or_expired_scheduler_authorization_fails_closed(self, urlopen):
+        urlopen.return_value = FakeResponse(
+            409,
+            {"consumed": False, "reason": "invalid_expired_or_replayed"},
+        )
+        with self.assertRaises(Account03LedgerError):
+            self.client.consume_slot_authorization("c" * 64)
+
+    def test_invalid_scheduler_authorization_is_rejected_before_network(self):
+        with patch("app.account03_ledger_client.urlopen") as urlopen:
+            with self.assertRaises(Account03LedgerError):
+                self.client.consume_slot_authorization("not-a-nonce")
+            urlopen.assert_not_called()
+
+    @patch("app.account03_ledger_client.urlopen")
     def test_finalize_marks_published(self, urlopen):
         urlopen.return_value = FakeResponse(
             200,

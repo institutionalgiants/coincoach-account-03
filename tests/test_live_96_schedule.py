@@ -101,7 +101,10 @@ class Account03ScheduleTests(unittest.TestCase):
         self.assertIn("minuteForHour", self.worker)
         self.assertIn("value % 60", self.worker)
         self.assertIn('account_id: "account_03"', self.worker)
-        self.assertIn('trigger_source: "account03_scheduler_v2"', self.worker)
+        self.assertIn("crypto.getRandomValues(new Uint8Array(32))", self.worker)
+        self.assertIn("SHA-256", self.worker)
+        self.assertIn("slot_nonce: slotNonce", self.worker)
+        self.assertIn("/v1/slot-authorizations/consume", self.worker)
         self.assertIn('GITHUB_WORKFLOW = "account03-live-square-hourly.yml"', self.wrangler)
         self.assertIn('env.GITHUB_WORKFLOW || "account03-live-square-hourly.yml"', self.worker)
 

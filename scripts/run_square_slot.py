@@ -134,6 +134,19 @@ def _day_key() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
+def account03_slot_hour_matches(
+    authorized_hour_bucket: str,
+    now: datetime | None = None,
+) -> bool:
+    """Return whether the current UTC hour is the one authorized by the Worker."""
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    else:
+        current = current.astimezone(timezone.utc)
+    return authorized_hour_bucket == current.strftime("%Y-%m-%d-%H")
+
+
 def _published_today(ledger: dict[str, Any], account_id: str) -> int:
     return int(ledger.get("days", {}).get(_day_key(), {}).get(account_id, 0))
 
@@ -359,6 +372,8 @@ async def main() -> None:
         "PER_ACCOUNT_DAILY_LIMIT", configured_daily_limit, 1, 500
     )
 
+    account03_authorized_hour: str | None = None
+
     for account_id, account in account_map.items():
         successful_slots = 0
         account_candidates = rotate_candidates_for_stateless_slot(
@@ -457,6 +472,20 @@ async def main() -> None:
 
             if account03_d1:
                 try:
+                    # Consume only after analysis and chart capture are complete.
+                    # The Worker rejects expired nonces and authorizations from a
+                    # different UTC hour; the local check fails closed as well.
+                    if account03_authorized_hour is None:
+                        authorization = ledger_client.consume_slot_authorization(
+                            os.getenv("ACCOUNT03_SLOT_NONCE", "")
+                        )
+                        account03_authorized_hour = str(
+                            authorization.get("hour_bucket", "")
+                        )
+                    if not account03_slot_hour_matches(account03_authorized_hour):
+                        raise Account03LedgerError(
+                            "Account 03 scheduler authorization no longer matches the current UTC hour."
+                        )
                     reservation = ledger_client.reserve(_account03_signal_payload(signal))
                 except Account03LedgerError as exc:
                     result["status"] = "blocked_ledger_unavailable"
@@ -481,6 +510,21 @@ async def main() -> None:
                 # Existing accounts retain their original local-ledger behavior.
                 record_publish_attempt(ledger, account_id, signal, status="publish_pending")
                 _save_ledger(ledger_path, ledger)
+
+            # Re-check after reservation and immediately before the external
+            # Binance request. If the hour rolled over, leave the reservation
+            # pending conservatively and do not make the external publish call.
+            if account03_d1 and not account03_slot_hour_matches(
+                account03_authorized_hour or ""
+            ):
+                result["status"] = "blocked_slot_hour_expired"
+                result["error"] = (
+                    "Account 03 authorization UTC hour expired before Binance publish; "
+                    "D1 reservation remains pending conservatively."
+                )
+                publish_results.append(result)
+                terminal_publish_error = True
+                break
 
             try:
                 output = publisher.publish_image(account, post["caption"], image_path)

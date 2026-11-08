@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -133,6 +134,22 @@ class Account03LedgerClient:
         raise Account03LedgerError(
             f"Account 03 reservation failed (HTTP {status}): "
             f"{body.get('error', body.get('reason', 'unexpected_response'))}"
+        )
+
+    def consume_slot_authorization(self, nonce: str) -> dict[str, Any]:
+        if not re.fullmatch(r"[0-9a-f]{64}", nonce or ""):
+            raise Account03LedgerError("Invalid Account 03 scheduler authorization nonce.")
+
+        status, body = self._request(
+            "POST",
+            "/v1/slot-authorizations/consume",
+            {"nonce": nonce},
+        )
+        if status == 200 and body.get("consumed") is True:
+            return body
+
+        raise Account03LedgerError(
+            "Account 03 scheduler authorization was invalid, expired, or already consumed."
         )
 
     def finalize(self, reservation_id: str, status: str) -> dict[str, Any]:

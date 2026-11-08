@@ -1,0 +1,44 @@
+name: Account 03 pull request checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches:
+      - main
+      - account03-humanized-news-and-publish-guards
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Python regression tests
+        run: python -m unittest discover -s tests -p "test*.py" -v
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Check and test Cloudflare Worker
+        run: |
+          node --check cloudflare_scheduler/src/index.js
+          node cloudflare_scheduler/test.mjs

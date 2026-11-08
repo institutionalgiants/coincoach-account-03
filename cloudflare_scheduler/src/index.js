@@ -261,6 +261,67 @@ async function minuteForHour(seed, hourKey) {
   return value % 60;
 }
 
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return hex(digest);
+}
+
+async function createSlotAuthorization(db, hourKey) {
+  if (!db || typeof db.prepare !== "function") {
+    throw new Error("Account 03 D1 binding is unavailable");
+  }
+
+  const randomBytes = crypto.getRandomValues(new Uint8Array(32));
+  const nonce = hex(randomBytes);
+  const tokenHash = await sha256Hex(nonce);
+  const nowMs = Date.now();
+  const expiresAtMs = nowMs + 10 * 60 * 1000;
+
+  // Retain a short audit window while preventing table growth without bound.
+  await db.prepare(
+    "DELETE FROM slot_authorizations WHERE expires_at_ms < ?"
+  ).bind(nowMs - 24 * 60 * 60 * 1000).run();
+
+  const inserted = await db.prepare(`
+    INSERT OR IGNORE INTO slot_authorizations (
+      token_hash, account_id, hour_bucket, created_at_ms, expires_at_ms
+    ) VALUES (?, 'account_03', ?, ?, ?)
+  `).bind(tokenHash, hourKey, nowMs, expiresAtMs).run();
+
+  if (Number(inserted?.meta?.changes || 0) !== 1) {
+    throw new Error("A scheduler authorization already exists for this UTC hour");
+  }
+  return nonce;
+}
+
+async function consumeSlotAuthorization(db, nonce) {
+  if (typeof nonce !== "string" || !/^[0-9a-f]{64}$/.test(nonce)) {
+    return { consumed: false, reason: "invalid_expired_or_replayed" };
+  }
+
+  const nowMs = Date.now();
+  const iso = new Date(nowMs).toISOString();
+  const currentHour = `${iso.slice(0, 10)}-${iso.slice(11, 13)}`;
+  const tokenHash = await sha256Hex(nonce);
+  const result = await db.prepare(`
+    UPDATE slot_authorizations
+    SET consumed_at_ms = ?
+    WHERE token_hash = ?
+      AND account_id = 'account_03'
+      AND hour_bucket = ?
+      AND consumed_at_ms IS NULL
+      AND expires_at_ms >= ?
+  `).bind(nowMs, tokenHash, currentHour, nowMs).run();
+
+  if (Number(result?.meta?.changes || 0) !== 1) {
+    return { consumed: false, reason: "invalid_expired_or_replayed" };
+  }
+  return { consumed: true, hour_bucket: currentHour };
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -298,6 +359,21 @@ export default {
     }
 
     try {
+      if (request.method === "POST" && url.pathname === "/v1/slot-authorizations/consume") {
+        let body;
+        try {
+          body = await readJson(request);
+        } catch (error) {
+          return jsonResponse({ error: error.message }, 400);
+        }
+        const result = await consumeSlotAuthorization(
+          env.ACCOUNT03_PUBLISH_LEDGER,
+          body?.nonce,
+        );
+        if (!result.consumed) return jsonResponse(result, 409);
+        return jsonResponse({ ok: true, ...result });
+      }
+
       if (request.method === "POST" && url.pathname === "/v1/reservations") {
         let body;
         try {
@@ -365,6 +441,13 @@ export default {
     const branch = env.GITHUB_BRANCH || "main";
     const token = env.GITHUB_TOKEN;
     if (!token) throw new Error("Missing GITHUB_TOKEN secret");
+    if (!env.ACCOUNT03_PUBLISH_LEDGER || typeof env.ACCOUNT03_PUBLISH_LEDGER.prepare !== "function") {
+      throw new Error("Account 03 D1 binding is unavailable");
+    }
+
+    // A high-entropy, short-lived nonce is stored only as a SHA-256 hash in D1.
+    // The workflow must atomically consume it before it can enter the publish path.
+    const slotNonce = await createSlotAuthorization(env.ACCOUNT03_PUBLISH_LEDGER, hourKey);
 
     const endpoint = `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`;
     const response = await fetch(endpoint, {
@@ -379,9 +462,8 @@ export default {
       body: JSON.stringify({
         ref: branch,
         inputs: {
-          trigger_source: "account03_scheduler_v2",
           account_id: "account_03",
-          confirmation: "ACCOUNT03_RANDOM_SLOT",
+          slot_nonce: slotNonce,
         },
       }),
     });
