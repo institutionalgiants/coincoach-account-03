@@ -70,6 +70,7 @@ class Account03LedgerClient:
         headers = {
             "Accept": "application/json",
             "Cache-Control": "no-store",
+            "User-Agent": "CoinCoach-Account03-Ledger/1.0 (+https://github.com/institutionalgiants/coincoach-account-03)",
             "Authorization": f"Bearer {self.token}",
         }
         if data is not None:

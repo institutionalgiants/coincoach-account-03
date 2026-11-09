@@ -79,6 +79,10 @@ class Account03LedgerClientTests(unittest.TestCase):
         self.assertEqual(sent["account_id"], "account_03")
         self.assertEqual(sent["signal"]["base_asset"], "DOGE")
         self.assertEqual(request.headers.get("Authorization"), "Bearer " + "x" * 40)
+        self.assertEqual(
+            request.get_header("User-agent"),
+            "CoinCoach-Account03-Ledger/1.0 (+https://github.com/institutionalgiants/coincoach-account-03)",
+        )
 
     @patch("app.account03_ledger_client.secrets.token_hex")
     @patch("app.account03_ledger_client.urlopen")
